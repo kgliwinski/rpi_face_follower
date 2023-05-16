@@ -7,7 +7,8 @@ import face_recognition
 import cv2
 import numpy as np
 import math
-
+from picamera.array import PiRGBArray
+from picamera import PiCamera
 
 path = 'Faces'
 images = []
@@ -34,41 +35,43 @@ def findEncodings(images):
         encodeList.append(img_encoding)
     return encodeList
 
+if __name__ == '__main__':
+    encodeListKnown = findEncodings(images)
+    print('Enkodowanie twarzy zakonczone')
 
-encodeListKnown = findEncodings(images)
-print('Enkodowanie twarzy zakonczone')
+    camera = PiCamera()
+    camera.resolution = (640, 480)
+    camera.framerate = 32
+    rawCapture = PiRGBArray(camera, size=(640, 480))
 
+    while True:
+        img = camera.capture_continuous(rawCapture, format="bgr", use_video_port=True)
 
-cap = cv2.VideoCapture(0)
+        imgS = cv2.resize(img, None, None, 0.25, 0.25)
+        imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
 
-while True:
-    SUCCESS, img = cap.read()
+        facesCurFrame = face_recognition.face_locations(imgS)
 
-    imgS = cv2.resize(img, None, None, 0.25, 0.25)
-    imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
+        encodeCurFrame = face_recognition.face_encodings(imgS, facesCurFrame)
 
-    facesCurFrame = face_recognition.face_locations(imgS)
+        for encodeFace, faceLoc in zip(encodeCurFrame, facesCurFrame):
+            matches = face_recognition.compare_faces(encodeListKnown, encodeFace)
 
-    encodeCurFrame = face_recognition.face_encodings(imgS, facesCurFrame)
+            faceDis = face_recognition.face_distance(encodeListKnown, encodeFace)
+            print(faceDis)
+            matchIndex = np.argmin(faceDis)
 
-    for encodeFace, faceLoc in zip(encodeCurFrame, facesCurFrame):
-        matches = face_recognition.compare_faces(encodeListKnown, encodeFace)
+            if matches[matchIndex]:
+                name = classnames[matchIndex].upper()
+                print(name)
 
-        faceDis = face_recognition.face_distance(encodeListKnown, encodeFace)
-        print(faceDis)
-        matchIndex = np.argmin(faceDis)
+                y1, x2, y2, x1 = faceLoc
+                y1, x2, y2, x1 = y1*4, x2*4, y2*4, x1*4
+                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.rectangle(img, (x1, y2-35), (x2, y2), (0, 255, 0), cv2.FILLED)
+                cv2.putText(img, name, (x1+6, y2-6),
+                            cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2)
 
-        if matches[matchIndex]:
-            name = classnames[matchIndex].upper()
-            print(name)
-
-            y1, x2, y2, x1 = faceLoc
-            y1, x2, y2, x1 = y1*4, x2*4, y2*4, x1*4
-            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.rectangle(img, (x1, y2-35), (x2, y2), (0, 255, 0), cv2.FILLED)
-            cv2.putText(img, name, (x1+6, y2-6),
-                        cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2)
-
-    cv2.imshow('Webcam', img)
-    if cv2.waitKey(1) == ord('q'):
-        break
+        cv2.imshow('Webcam', img)
+        if cv2.waitKey(1) == ord('q'):
+            break
