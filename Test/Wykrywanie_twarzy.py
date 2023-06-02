@@ -9,8 +9,8 @@ import numpy as np
 import math
 from picamera.array import PiRGBArray
 from picamera import PiCamera
-import io 
-
+import io
+import time
 path = 'Faces'
 images = []
 classnames = []
@@ -48,11 +48,12 @@ if __name__ == '__main__':
     stream = io.BytesIO()
 
     for img in camera.capture_continuous(rawCapture, format="bgr", use_video_port=True):
-        
+        st = time.time()
         imgRaw = rawCapture.array
         imgS = cv2.resize(imgRaw, (0,0), None, 0.25, 0.25)
         imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
-
+        print("Camera capture",time.time() - st)
+        st = time.time()
         facesCurFrame = face_recognition.face_locations(imgRaw)
 
         encodeCurFrame = face_recognition.face_encodings(imgRaw, facesCurFrame)
@@ -61,12 +62,14 @@ if __name__ == '__main__':
             matches = face_recognition.compare_faces(encodeListKnown, encodeFace)
 
             faceDis = face_recognition.face_distance(encodeListKnown, encodeFace)
-            print(faceDis)
+            #print(faceDis)
             matchIndex = np.argmin(faceDis)
+            print("Face distance and face matches", time.time() - st)
+            st = time.time()
 
             if matches[matchIndex]:
                 name = classnames[matchIndex].upper()
-                print(name)
+                # print(name)
 
                 y1, x2, y2, x1 = faceLoc
                 y1, x2, y2, x1 = y1*4, x2*4, y2*4, x1*4
@@ -74,8 +77,9 @@ if __name__ == '__main__':
                 cv2.rectangle(imgRaw, (x1, y2-35), (x2, y2), (0, 255, 0), cv2.FILLED)
                 cv2.putText(imgRaw, name, (x1+6, y2-6),
                             cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2)
-
+            print("rectangles and text",time.time() - st)
+        
         cv2.imshow('Webcam', imgRaw)
         if cv2.waitKey(1) == ord('q'):
-            break
+           break
         rawCapture.truncate(0)
