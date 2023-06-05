@@ -1,29 +1,49 @@
 import cv2
 import threading
 import queue
-import RPi.GPIO as GPIO
 from picamera import PiCamera
 from picamera.array import PiRGBArray
 import time
+import serial
+import serial.tools.list_ports
+import numpy as np
 
 # Set up GPIO and servo constants
 SERVO_PIN_VERTICAL = 33  # GPIO pin for vertical servo
 SERVO_PIN_HORIZONTAL = 32  # GPIO pin for horizontal servo
 SERVO_FREQ = 50
 SERVO_ANGLE_RANGE = (30., 150.)
-SERVO_ANGLE_RANGE_AVG = float((SERVO_ANGLE_RANGE[0] + SERVO_ANGLE_RANGE[1]) / 2.)
-SERVO_DUTY_RANGE = (5., 10.)
 
 position_queue = queue.Queue()
 
-def angle_to_duty_cycle(angle, angle_range = SERVO_ANGLE_RANGE, duty_range = SERVO_DUTY_RANGE):
-    # Calculate the duty cycle within the duty range based on the angle within the angle range
-    duty_cycle = ((duty_range[1] - duty_range[0]) * angle / (angle_range[1] - angle_range[0])) + duty_range[0]
-    
-    # Ensure the duty cycle is within the duty range
-    duty_cycle = max(min(duty_cycle, duty_range[1]), duty_range[0])
-    print("Angle, duty cycle", angle, duty_cycle)
-    return duty_cycle
+def pos_to_angle(pos, cur_angle, angle_range = SERVO_ANGLE_RANGE):
+    # function to calculate face position to angle
+    CONST = 5
+    BOX_LOWER_PERC = 45.
+    BOX_HIGHER_PERC = 55.
+    if BOX_LOWER_PERC > pos[0] or pos[0] > BOX_HIGHER_PERC:
+        if(pos[0] >= 50.):
+            angle_x = cur_angle[0] + CONST
+        else:
+            angle_x = cur_angle[0] - CONST
+    else:
+        angle_x = cur_angle[0]
+    if BOX_LOWER_PERC > pos[1] or pos[1] > BOX_HIGHER_PERC:
+        if(pos[1] >= 50.):
+            angle_y = cur_angle[1] - CONST
+        else:
+            angle_y = cur_angle[1] + CONST
+    else:
+        angle_y = cur_angle[1]
+    return (angle_x, angle_y)
+
+def show_serial_ports() -> list:
+    ports = serial.tools.list_ports.comports()
+    prt = []
+    for i, (port, desc, hwid) in enumerate(sorted(ports)):
+        print("Number {}: {} {} [{}]".format(i, port, desc, hwid))
+        prt.append(port)
+    return prt
 
 # Function to detect and recognize faces
 def face_recognition_fun():
@@ -34,17 +54,7 @@ def face_recognition_fun():
     camera.resolution = (640, 480)
     camera.framerate = 30
     raw_capture = PiRGBArray(camera, size=(640, 480))
-    GPIO.setmode(GPIO.BOARD)
-    GPIO.setup(SERVO_PIN_VERTICAL, GPIO.OUT)
-    GPIO.setup(SERVO_PIN_HORIZONTAL, GPIO.OUT)
-    servo_vertical = GPIO.PWM(SERVO_PIN_VERTICAL, SERVO_FREQ)
-    servo_horizontal = GPIO.PWM(SERVO_PIN_HORIZONTAL, SERVO_FREQ)
-    servo_vertical.start(0)
-    servo_horizontal.start(0)
-    angle_vertical = SERVO_ANGLE_RANGE_AVG
-    angle_horizontal = SERVO_ANGLE_RANGE_AVG
-    servo_vertical.ChangeDutyCycle(8.)
-    servo_horizontal.ChangeDutyCycle(8.)
+
     # Allow camera to warm up
     time.sleep(0.1)
 
@@ -60,13 +70,13 @@ def face_recognition_fun():
         # print(faces, len(faces))
         if len(faces) > 0:
         # Perform face recognition for each detected face
-            for (x, y, w, h) in faces:
+            (x, y, w, h) = faces[0]
 
                 # Calculate face position in percentage (0-100)
-                face_x = (x + w/2)
-                face_z = (y + h/2)
-                print(face_x, face_z)
-                
+            face_x = (x + w/2) / image.shape[1] * 100
+            face_y = (y + h/2) / image.shape[0] * 100
+            print(face_x, face_y, len(faces))
+            position_queue.put((face_x, face_y))
                     
         # Display the video frame with face rectangles
         cv2.imshow('Video', image)
@@ -85,31 +95,22 @@ def face_recognition_fun():
 
 # Function to control the servomechanisms based on face position
 def servomechanism_control_fun():
-    # Set up GPIO
-    GPIO.setmode(GPIO.BOARD)
-    GPIO.setup(SERVO_PIN_VERTICAL, GPIO.OUT)
-    GPIO.setup(SERVO_PIN_HORIZONTAL, GPIO.OUT)
-    servo_vertical = GPIO.PWM(SERVO_PIN_VERTICAL, SERVO_FREQ)
-    servo_horizontal = GPIO.PWM(SERVO_PIN_HORIZONTAL, SERVO_FREQ)
-    servo_vertical.start(0)
-    servo_horizontal.start(0)
-    angle_vertical = SERVO_ANGLE_RANGE_AVG
-    angle_horizontal = SERVO_ANGLE_RANGE_AVG
-    servo_vertical.ChangeDutyCycle(8.)
-    servo_horizontal.ChangeDutyCycle(8.)
-    while True:
-        # Wait for a face position to be available
-        face_position = position_queue.get(block=True, timeout = 5.)
-        angle_vertical = SERVO_ANGLE_RANGE_AVG* 2 * (100. - face_position[1])
-        angle_horizontal = SERVO_ANGLE_RANGE_AVG *2* (100. - face_position[0])
-        # Apply duty cycle to the vertical servo
-        servo_vertical.ChangeDutyCycle(angle_to_duty_cycle(angle_vertical))
-        servo_horizontal.ChangeDutyCycle(angle_to_duty_cycle(angle_horizontal))
+    available_ports = show_serial_ports()
+    # sender_num = int(input('Insert the sender serial port: '))
+    sender_serial = serial.Serial(available_ports[1], 115200)
+    last_angles = (90.,90.)
+    sender_serial.write(bytes(str(last_angles[0]) + ";" + str(last_angles[1]) + ';\n', 'ascii'))
+    while(True):
+        face_xy = position_queue.get()
+        print(face_xy)
+        last_angles = pos_to_angle(face_xy, last_angles)
+        sender_serial.write(bytes(str(last_angles[0]) + ";" + str(last_angles[1]) + ';\n', 'ascii'))
 
+    
 # Create and start the face recognition thread
 face_recognition_thread = threading.Thread(target=face_recognition_fun)
 face_recognition_thread.start()
 
 # Create and start the position control thread
-# position_control_thread = threading.Thread(target=servomechanism_control_fun)
-# position_control_thread.start()
+position_control_thread = threading.Thread(target=servomechanism_control_fun)
+position_control_thread.start()
